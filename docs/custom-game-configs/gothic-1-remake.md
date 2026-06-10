@@ -114,12 +114,17 @@ Do not add them to `Engine.ini` when UE4SS is present.
 
 G1R's AngelScript layer drives engine dispatch points (especially
 `ProcessEvent`) at thousands of calls per frame, so UE4SS detours that are
-cheap elsewhere are disproportionately expensive here. The supplied
-`UE4SS-settings.ini` disables every detour no installed mod uses:
-`HookUObjectProcessEvent`, `HookAActorTick`, `HookGameViewportClientTick`,
-`HookEndPlay`, `HookProcessConsoleExec`, `HookLocalPlayerExec`,
-`HookCallFunctionByNameWithArguments`. If a mod needs one, UE4SS logs a
-warning naming the hook — re-enable just that one.
+cheap elsewhere are disproportionately expensive here.
+
+The `g1r-compat` fork registers all Lua hook bridges **lazily**: a detour is
+only installed when a mod actually registers a callback for it (e.g. the first
+`RegisterEndPlayPreHook` call installs the EndPlay detour). Hooks with no
+consumers cost nothing, so the supplied `UE4SS-settings.ini` leaves every
+`[Hooks]` entry at `1` — they are pure kill switches. Set one to `0` only to
+globally disable a misbehaving feature; mods that try to use it will then log
+a "Failed to add hook" error. Exception: the ProcessConsoleExec bridges
+(`luastart`/`luastop`/`clear`) install eagerly when `ConsoleEnabled` or
+`GuiConsoleEnabled` is `1`, so the console Lua executor works out of the box.
 
 The `g1r-compat` UEPseudo branch also replaces the searcher pools' O(n)
 erase-remove with index-mapped swap-and-pop (O(1) add/remove, deduped).

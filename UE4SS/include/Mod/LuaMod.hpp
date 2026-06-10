@@ -187,6 +187,10 @@ namespace RC
         bool m_pause_events_processing{};
         bool m_is_process_event_hooked{};
         static inline bool m_is_engine_tick_hooked{};
+        static inline bool m_is_end_play_hooked{};
+        static inline bool m_is_local_player_exec_hooked{};
+        static inline bool m_is_call_function_by_name_hooked{};
+        static inline bool m_is_process_console_exec_hooked{};
         std::mutex m_actions_lock{};
 
       public:
@@ -202,6 +206,14 @@ namespace RC
       private:
         static auto ensure_engine_tick_hooked() -> void;
         static auto ensure_process_event_hooked(LuaMod* mod) -> void;
+
+      public:
+        static auto ensure_end_play_hooked() -> void;
+        static auto ensure_local_player_exec_hooked() -> void;
+        static auto ensure_call_function_by_name_hooked() -> void;
+        static auto ensure_process_console_exec_hooked() -> void;
+
+      private:
 
         static auto custom_module_searcher(lua_State* L) -> int;
         auto setup_custom_module_loader(const LuaMadeSimple::Lua* lua_state) -> void;

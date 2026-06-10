@@ -2571,6 +2571,7 @@ Overloads:
             // Take a reference to the Lua function (it also pops it of the stack)
             const int32_t lua_callback_registry_index = hook_lua->registry().make_ref();
 
+            LuaMod::ensure_end_play_hooked();
             LuaMod::m_end_play_pre_callbacks.emplace_back(LuaMod::LuaCallbackData{
                     .lua = hook_lua,
                     .instance_of_class = nullptr,
@@ -2599,6 +2600,7 @@ Overloads:
             // Take a reference to the Lua function (it also pops it of the stack)
             const int32_t lua_callback_registry_index = hook_lua->registry().make_ref();
 
+            LuaMod::ensure_end_play_hooked();
             LuaMod::m_end_play_post_callbacks.emplace_back(LuaMod::LuaCallbackData{
                     .lua = hook_lua,
                     .instance_of_class = nullptr,
@@ -3037,6 +3039,7 @@ Overloads:
             LuaMod::LuaCallbackData* callback = nullptr;
             auto mod = get_mod_ref(lua);
             auto hook_lua = get_hook_lua(mod);
+            LuaMod::ensure_process_console_exec_hooked();
             callback = &LuaMod::m_process_console_exec_pre_callbacks.emplace_back(LuaMod::LuaCallbackData{hook_lua, nullptr, {}});
             lua_xmove(lua.get_lua_state(), callback->lua->get_lua_state(), 1);
             const int32_t lua_function_ref = callback->lua->registry().make_ref();
@@ -3058,6 +3061,7 @@ Overloads:
             LuaMod::LuaCallbackData* callback = nullptr;
             auto mod = get_mod_ref(lua);
             auto hook_lua = get_hook_lua(mod);
+            LuaMod::ensure_process_console_exec_hooked();
             callback = &LuaMod::m_process_console_exec_post_callbacks.emplace_back(LuaMod::LuaCallbackData{hook_lua, nullptr, {}});
             lua_xmove(lua.get_lua_state(), callback->lua->get_lua_state(), 1);
             const int32_t lua_function_ref = callback->lua->registry().make_ref();
@@ -3079,6 +3083,7 @@ Overloads:
             LuaMod::LuaCallbackData* callback = nullptr;
             auto mod = get_mod_ref(lua);
             auto hook_lua = get_hook_lua(mod);
+            LuaMod::ensure_call_function_by_name_hooked();
             callback = &LuaMod::m_call_function_by_name_with_arguments_pre_callbacks.emplace_back(LuaMod::LuaCallbackData{hook_lua, nullptr, {}});
             lua_xmove(lua.get_lua_state(), callback->lua->get_lua_state(), 1);
             const int32_t lua_function_ref = callback->lua->registry().make_ref();
@@ -3100,6 +3105,7 @@ Overloads:
             LuaMod::LuaCallbackData* callback = nullptr;
             auto mod = get_mod_ref(lua);
             auto hook_lua = get_hook_lua(mod);
+            LuaMod::ensure_call_function_by_name_hooked();
             callback = &LuaMod::m_call_function_by_name_with_arguments_post_callbacks.emplace_back(LuaMod::LuaCallbackData{hook_lua, nullptr, {}});
             lua_xmove(lua.get_lua_state(), callback->lua->get_lua_state(), 1);
             const int32_t lua_function_ref = callback->lua->registry().make_ref();
@@ -3121,6 +3127,7 @@ Overloads:
             LuaMod::LuaCallbackData* callback = nullptr;
             auto mod = get_mod_ref(lua);
             auto hook_lua = get_hook_lua(mod);
+            LuaMod::ensure_local_player_exec_hooked();
             callback = &LuaMod::m_local_player_exec_pre_callbacks.emplace_back(LuaMod::LuaCallbackData{hook_lua, nullptr, {}});
             lua_xmove(lua.get_lua_state(), callback->lua->get_lua_state(), 1);
             const int32_t lua_function_ref = callback->lua->registry().make_ref();
@@ -3142,6 +3149,7 @@ Overloads:
             LuaMod::LuaCallbackData* callback = nullptr;
             auto mod = get_mod_ref(lua);
             auto hook_lua = get_hook_lua(mod);
+            LuaMod::ensure_local_player_exec_hooked();
             callback = &LuaMod::m_local_player_exec_post_callbacks.emplace_back(LuaMod::LuaCallbackData{hook_lua, nullptr, {}});
             lua_xmove(lua.get_lua_state(), callback->lua->get_lua_state(), 1);
             const int32_t lua_function_ref = callback->lua->registry().make_ref();
@@ -3167,6 +3175,7 @@ Overloads:
             }
 
             LuaMod::LuaCallbackData* callback = nullptr;
+            LuaMod::ensure_process_console_exec_hooked();
             auto iter = LuaMod::m_global_command_lua_callbacks.find(command_name);
             if (iter == LuaMod::m_global_command_lua_callbacks.end())
             {
@@ -3202,6 +3211,7 @@ Overloads:
             }
 
             LuaMod::LuaCallbackData* callback = nullptr;
+            LuaMod::ensure_process_console_exec_hooked();
             auto iter = LuaMod::m_custom_command_lua_pre_callbacks.find(command_name);
             if (iter == LuaMod::m_custom_command_lua_pre_callbacks.end())
             {
@@ -4073,6 +4083,275 @@ Overloads:
             Unreal::Hook::RegisterProcessEventPreCallback(process_event_hook, {false, false, STR("UE4SS"), STR("LuaModImpl")});
             mod->m_is_process_event_hooked = true;
         }
+    }
+
+    // Lazily registers the EndPlay bridge callbacks (and thereby installs the EndPlay detour)
+    // the first time a Lua mod registers an EndPlay hook.
+    auto LuaMod::ensure_end_play_hooked() -> void
+    {
+        if (m_is_end_play_hooked)
+        {
+            return;
+        }
+        m_is_end_play_hooked = true;
+
+        const Unreal::Hook::FCallbackOptions common_opts{false, false, STR("UE4SS"), STR("LuaModImpl")};
+
+        Unreal::Hook::RegisterEndPlayPreCallback([]([[maybe_unused]] Unreal::Hook::TCallbackIterationData<void>& CallbackIterationData, [[maybe_unused]] Unreal::AActor* Context, Unreal::EEndPlayReason EndPlayReason) {
+            TRY([&] {
+                for (const auto& callback_data : m_end_play_pre_callbacks)
+                {
+                    for (const auto& [lua_ptr, registry_index] : callback_data.registry_indexes)
+                    {
+                        const auto& lua = *lua_ptr;
+
+                        lua.registry().get_function_ref(registry_index.lua_index);
+                        static auto s_object_property_name = Unreal::FName(STR("ObjectProperty"), Unreal::FNAME_Find);
+                        LuaType::RemoteUnrealParam::construct(lua, &Context, s_object_property_name);
+                        static auto s_int_property_name = Unreal::FName(STR("IntProperty"), Unreal::FNAME_Find);
+                        LuaType::RemoteUnrealParam::construct(lua, &EndPlayReason, s_int_property_name);
+                        lua.call_function(2, 0);
+                    }
+                }
+            });
+        }, common_opts);
+
+        Unreal::Hook::RegisterEndPlayPostCallback([]([[maybe_unused]] Unreal::Hook::TCallbackIterationData<void>& CallbackIterationData, [[maybe_unused]] Unreal::AActor* Context, Unreal::EEndPlayReason EndPlayReason) {
+            TRY([&] {
+                for (const auto& callback_data : m_end_play_post_callbacks)
+                {
+                    for (const auto& [lua_ptr, registry_index] : callback_data.registry_indexes)
+                    {
+                        const auto& lua = *lua_ptr;
+
+                        lua.registry().get_function_ref(registry_index.lua_index);
+                        static auto s_object_property_name = Unreal::FName(STR("ObjectProperty"), Unreal::FNAME_Find);
+                        LuaType::RemoteUnrealParam::construct(lua, &Context, s_object_property_name);
+                        static auto s_int_property_name = Unreal::FName(STR("IntProperty"), Unreal::FNAME_Find);
+                        LuaType::RemoteUnrealParam::construct(lua, &EndPlayReason, s_int_property_name);
+                        lua.call_function(2, 0);
+                    }
+                }
+            });
+        }, common_opts);
+    }
+
+    // Lazily registers the ULocalPlayer::Exec bridge callbacks (and thereby installs the detour)
+    // the first time a Lua mod registers a ULocalPlayerExec hook.
+    auto LuaMod::ensure_local_player_exec_hooked() -> void
+    {
+        if (m_is_local_player_exec_hooked)
+        {
+            return;
+        }
+        m_is_local_player_exec_hooked = true;
+
+        Unreal::Hook::RegisterULocalPlayerExecPreCallback([](Unreal::ULocalPlayer* context, Unreal::UWorld* in_world, const TCHAR* cmd, Unreal::FOutputDevice& ar)
+                                                                  -> Unreal::Hook::ULocalPlayerExecCallbackReturnValue {
+            return TRY([&] {
+                for (const auto& callback_data : m_local_player_exec_pre_callbacks)
+                {
+                    Unreal::Hook::ULocalPlayerExecCallbackReturnValue return_value{};
+
+                    for (const auto& [lua, registry_index] : callback_data.registry_indexes)
+                    {
+                        callback_data.lua->registry().get_function_ref(registry_index.lua_index);
+
+                        static auto s_object_property_name = Unreal::FName(STR("ObjectProperty"), Unreal::FNAME_Find);
+                        LuaType::RemoteUnrealParam::construct(*callback_data.lua, &context, s_object_property_name);
+                        LuaType::RemoteUnrealParam::construct(*callback_data.lua, &in_world, s_object_property_name);
+                        callback_data.lua->set_string(to_string(cmd));
+                        LuaType::FOutputDevice::construct(*callback_data.lua, &ar);
+
+                        callback_data.lua->call_function(4, 2);
+
+                        if (callback_data.lua->is_nil())
+                        {
+                            return_value.UseOriginalReturnValue = true;
+                            callback_data.lua->discard_value();
+                        }
+                        else if (!callback_data.lua->is_bool())
+                        {
+                            throw std::runtime_error{"The first return value for 'RegisterULocalPlayerExecPreHook' must return bool or nil"};
+                        }
+                        else
+                        {
+                            return_value.UseOriginalReturnValue = false;
+                            return_value.NewReturnValue = callback_data.lua->get_bool();
+                        }
+
+                        if (callback_data.lua->is_nil())
+                        {
+                            return_value.ExecuteOriginalFunction = true;
+                            callback_data.lua->discard_value();
+                        }
+                        else if (!callback_data.lua->is_bool())
+                        {
+                            throw std::runtime_error{"The second return value for callback 'RegisterULocalPlayerExecPreHook' must return bool or nil"};
+                        }
+                        else
+                        {
+                            return_value.ExecuteOriginalFunction = callback_data.lua->get_bool();
+                        }
+                    }
+
+                    return return_value;
+                }
+
+                return Unreal::Hook::ULocalPlayerExecCallbackReturnValue{};
+            });
+        });
+
+        Unreal::Hook::RegisterULocalPlayerExecPostCallback([](Unreal::ULocalPlayer* context, Unreal::UWorld* in_world, const TCHAR* cmd, Unreal::FOutputDevice& ar)
+                                                                   -> Unreal::Hook::ULocalPlayerExecCallbackReturnValue {
+            return TRY([&] {
+                for (const auto& callback_data : m_local_player_exec_post_callbacks)
+                {
+                    Unreal::Hook::ULocalPlayerExecCallbackReturnValue return_value{};
+
+                    for (const auto& [lua, registry_index] : callback_data.registry_indexes)
+                    {
+                        callback_data.lua->registry().get_function_ref(registry_index.lua_index);
+
+                        static auto s_object_property_name = Unreal::FName(STR("ObjectProperty"), Unreal::FNAME_Find);
+                        LuaType::RemoteUnrealParam::construct(*callback_data.lua, &context, s_object_property_name);
+                        LuaType::RemoteUnrealParam::construct(*callback_data.lua, &in_world, s_object_property_name);
+                        callback_data.lua->set_string(to_string(cmd));
+                        LuaType::FOutputDevice::construct(*callback_data.lua, &ar);
+
+                        callback_data.lua->call_function(4, 2);
+
+                        if (callback_data.lua->is_nil())
+                        {
+                            return_value.UseOriginalReturnValue = true;
+                            callback_data.lua->discard_value();
+                        }
+                        else if (!callback_data.lua->is_bool())
+                        {
+                            throw std::runtime_error{"A callback for 'RegisterULocalPlayerExecPreHook' must return bool or nil"};
+                        }
+                        else
+                        {
+                            return_value.UseOriginalReturnValue = false;
+                            return_value.NewReturnValue = callback_data.lua->get_bool();
+                        }
+
+                        if (callback_data.lua->is_nil())
+                        {
+                            return_value.ExecuteOriginalFunction = true;
+                            callback_data.lua->discard_value();
+                        }
+                        else if (!callback_data.lua->is_bool())
+                        {
+                            throw std::runtime_error{"The second return value for callback 'RegisterULocalPlayerExecPreHook' must return bool or nil"};
+                        }
+                        else
+                        {
+                            return_value.ExecuteOriginalFunction = callback_data.lua->get_bool();
+                        }
+                    }
+
+                    return return_value;
+                }
+
+                return Unreal::Hook::ULocalPlayerExecCallbackReturnValue{};
+            });
+        });
+    }
+
+    // Lazily registers the CallFunctionByNameWithArguments bridge callbacks (and thereby installs the detour)
+    // the first time a Lua mod registers a CallFunctionByNameWithArguments hook.
+    auto LuaMod::ensure_call_function_by_name_hooked() -> void
+    {
+        if (m_is_call_function_by_name_hooked)
+        {
+            return;
+        }
+        m_is_call_function_by_name_hooked = true;
+
+        Unreal::Hook::RegisterCallFunctionByNameWithArgumentsPreCallback(
+                [](Unreal::UObject* context, const TCHAR* str, Unreal::FOutputDevice& ar, Unreal::UObject* executor, bool b_force_call_with_non_exec)
+                        -> std::pair<bool, bool> {
+                    return TRY([&] {
+                        std::pair<bool, bool> return_value{};
+                        for (const auto& callback_data : m_call_function_by_name_with_arguments_pre_callbacks)
+                        {
+
+                            for (const auto& [lua, registry_index] : callback_data.registry_indexes)
+                            {
+                                callback_data.lua->registry().get_function_ref(registry_index.lua_index);
+
+                                static auto s_object_property_name = Unreal::FName(STR("ObjectProperty"), Unreal::FNAME_Find);
+                                LuaType::RemoteUnrealParam::construct(*callback_data.lua, &context, s_object_property_name);
+                                callback_data.lua->set_string(to_string(str));
+                                LuaType::FOutputDevice::construct(*callback_data.lua, &ar);
+                                LuaType::RemoteUnrealParam::construct(*callback_data.lua, &executor, s_object_property_name);
+                                callback_data.lua->set_bool(b_force_call_with_non_exec);
+
+                                callback_data.lua->call_function(5, 1);
+
+                                if (callback_data.lua->is_nil())
+                                {
+                                    return_value.first = false;
+                                    callback_data.lua->discard_value();
+                                }
+                                else if (!callback_data.lua->is_bool())
+                                {
+                                    throw std::runtime_error{"A callback for 'RegisterCallFunctionByNameWithArgumentsPreHook' must return bool or nil"};
+                                }
+                                else
+                                {
+                                    return_value.first = true;
+                                    return_value.second = callback_data.lua->get_bool();
+                                }
+                            }
+                        }
+
+                        return return_value;
+                    });
+                });
+
+        Unreal::Hook::RegisterCallFunctionByNameWithArgumentsPostCallback(
+                [](Unreal::UObject* context, const TCHAR* str, Unreal::FOutputDevice& ar, Unreal::UObject* executor, bool b_force_call_with_non_exec)
+                        -> std::pair<bool, bool> {
+                    return TRY([&] {
+                        std::pair<bool, bool> return_value{};
+                        for (const auto& callback_data : m_call_function_by_name_with_arguments_post_callbacks)
+                        {
+
+                            for (const auto& [lua, registry_index] : callback_data.registry_indexes)
+                            {
+                                callback_data.lua->registry().get_function_ref(registry_index.lua_index);
+
+                                static auto s_object_property_name = Unreal::FName(STR("ObjectProperty"), Unreal::FNAME_Find);
+                                LuaType::RemoteUnrealParam::construct(*callback_data.lua, &context, s_object_property_name);
+                                callback_data.lua->set_string(to_string(str));
+                                LuaType::FOutputDevice::construct(*callback_data.lua, &ar);
+                                LuaType::RemoteUnrealParam::construct(*callback_data.lua, &executor, s_object_property_name);
+                                callback_data.lua->set_bool(b_force_call_with_non_exec);
+
+                                callback_data.lua->call_function(5, 1);
+
+                                if (callback_data.lua->is_nil())
+                                {
+                                    return_value.first = false;
+                                    callback_data.lua->discard_value();
+                                }
+                                else if (!callback_data.lua->is_bool())
+                                {
+                                    throw std::runtime_error{"A callback for 'RegisterCallFunctionByNameWithArgumentsPreHook' must return bool or nil"};
+                                }
+                                else
+                                {
+                                    return_value.first = true;
+                                    return_value.second = callback_data.lua->get_bool();
+                                }
+                            }
+                        }
+
+                        return return_value;
+                    });
+                });
     }
 
     auto LuaMod::setup_lua_global_functions_main_state_only() const -> void
@@ -6430,44 +6709,6 @@ Overloads:
             });
         }, common_opts);
 
-        Unreal::Hook::RegisterEndPlayPreCallback([]([[maybe_unused]] Unreal::Hook::TCallbackIterationData<void>& CallbackIterationData, [[maybe_unused]] Unreal::AActor* Context, Unreal::EEndPlayReason EndPlayReason) {
-            TRY([&] {
-                for (const auto& callback_data : m_end_play_pre_callbacks)
-                {
-                    for (const auto& [lua_ptr, registry_index] : callback_data.registry_indexes)
-                    {
-                        const auto& lua = *lua_ptr;
-
-                        lua.registry().get_function_ref(registry_index.lua_index);
-                        static auto s_object_property_name = Unreal::FName(STR("ObjectProperty"), Unreal::FNAME_Find);
-                        LuaType::RemoteUnrealParam::construct(lua, &Context, s_object_property_name);
-                        static auto s_int_property_name = Unreal::FName(STR("IntProperty"), Unreal::FNAME_Find);
-                        LuaType::RemoteUnrealParam::construct(lua, &EndPlayReason, s_int_property_name);
-                        lua.call_function(2, 0);
-                    }
-                }
-            });
-        }, common_opts);
-
-        Unreal::Hook::RegisterEndPlayPostCallback([]([[maybe_unused]] Unreal::Hook::TCallbackIterationData<void>& CallbackIterationData, [[maybe_unused]] Unreal::AActor* Context, Unreal::EEndPlayReason EndPlayReason) {
-            TRY([&] {
-                for (const auto& callback_data : m_end_play_post_callbacks)
-                {
-                    for (const auto& [lua_ptr, registry_index] : callback_data.registry_indexes)
-                    {
-                        const auto& lua = *lua_ptr;
-
-                        lua.registry().get_function_ref(registry_index.lua_index);
-                        static auto s_object_property_name = Unreal::FName(STR("ObjectProperty"), Unreal::FNAME_Find);
-                        LuaType::RemoteUnrealParam::construct(lua, &Context, s_object_property_name);
-                        static auto s_int_property_name = Unreal::FName(STR("IntProperty"), Unreal::FNAME_Find);
-                        LuaType::RemoteUnrealParam::construct(lua, &EndPlayReason, s_int_property_name);
-                        lua.call_function(2, 0);
-                    }
-                }
-            });
-        }, common_opts);
-
         Unreal::Hook::RegisterStaticConstructObjectPostCallback([](const Unreal::FStaticConstructObjectParameters&, Unreal::UObject* constructed_object) {
             return TRY([&] {
                 // IMPORTANT: StaticConstructObject can be called from outside of the game thread (loading threads, etc.)
@@ -6561,201 +6802,32 @@ Overloads:
             });
         });
 
-        Unreal::Hook::RegisterULocalPlayerExecPreCallback([](Unreal::ULocalPlayer* context, Unreal::UWorld* in_world, const TCHAR* cmd, Unreal::FOutputDevice& ar)
-                                                                  -> Unreal::Hook::ULocalPlayerExecCallbackReturnValue {
-            return TRY([&] {
-                for (const auto& callback_data : m_local_player_exec_pre_callbacks)
-                {
-                    Unreal::Hook::ULocalPlayerExecCallbackReturnValue return_value{};
+        if (Unreal::UObject::ProcessLocalScriptFunctionInternal.is_ready() && Unreal::Version::IsAtLeast(4, 22))
+        {
+            Output::send(STR("Enabling custom events\n"));
+            Unreal::Hook::RegisterProcessLocalScriptFunctionPostCallback(script_hook, {false, false, STR("UE4SS"), STR("LuaModImplScriptHook")});
+        }
+        else if (Unreal::UObject::ProcessInternalInternal.is_ready() && Unreal::Version::IsBelow(4, 22))
+        {
+            Output::send(STR("Enabling custom events\n"));
+            Unreal::Hook::RegisterProcessInternalPostCallback(script_hook, {false, false, STR("UE4SS"), STR("LuaModImplScriptHook")});
+        }
 
-                    for (const auto& [lua, registry_index] : callback_data.registry_indexes)
-                    {
-                        callback_data.lua->registry().get_function_ref(registry_index.lua_index);
+        // ProcessConsoleExec bridge callbacks are registered lazily (see ensure_process_console_exec_hooked).
+        // Only register eagerly when a UE4SS console is enabled so that 'luastart'/'clear' work out of the box.
+        if (UE4SSProgram::settings_manager.Debug.SimpleConsoleEnabled || UE4SSProgram::settings_manager.Debug.DebugConsoleEnabled)
+        {
+            ensure_process_console_exec_hooked();
+        }
+    }
 
-                        static auto s_object_property_name = Unreal::FName(STR("ObjectProperty"), Unreal::FNAME_Find);
-                        LuaType::RemoteUnrealParam::construct(*callback_data.lua, &context, s_object_property_name);
-                        LuaType::RemoteUnrealParam::construct(*callback_data.lua, &in_world, s_object_property_name);
-                        callback_data.lua->set_string(to_string(cmd));
-                        LuaType::FOutputDevice::construct(*callback_data.lua, &ar);
-
-                        callback_data.lua->call_function(4, 2);
-
-                        if (callback_data.lua->is_nil())
-                        {
-                            return_value.UseOriginalReturnValue = true;
-                            callback_data.lua->discard_value();
-                        }
-                        else if (!callback_data.lua->is_bool())
-                        {
-                            throw std::runtime_error{"The first return value for 'RegisterULocalPlayerExecPreHook' must return bool or nil"};
-                        }
-                        else
-                        {
-                            return_value.UseOriginalReturnValue = false;
-                            return_value.NewReturnValue = callback_data.lua->get_bool();
-                        }
-
-                        if (callback_data.lua->is_nil())
-                        {
-                            return_value.ExecuteOriginalFunction = true;
-                            callback_data.lua->discard_value();
-                        }
-                        else if (!callback_data.lua->is_bool())
-                        {
-                            throw std::runtime_error{"The second return value for callback 'RegisterULocalPlayerExecPreHook' must return bool or nil"};
-                        }
-                        else
-                        {
-                            return_value.ExecuteOriginalFunction = callback_data.lua->get_bool();
-                        }
-                    }
-
-                    return return_value;
-                }
-
-                return Unreal::Hook::ULocalPlayerExecCallbackReturnValue{};
-            });
-        });
-
-        Unreal::Hook::RegisterULocalPlayerExecPostCallback([](Unreal::ULocalPlayer* context, Unreal::UWorld* in_world, const TCHAR* cmd, Unreal::FOutputDevice& ar)
-                                                                   -> Unreal::Hook::ULocalPlayerExecCallbackReturnValue {
-            return TRY([&] {
-                for (const auto& callback_data : m_local_player_exec_post_callbacks)
-                {
-                    Unreal::Hook::ULocalPlayerExecCallbackReturnValue return_value{};
-
-                    for (const auto& [lua, registry_index] : callback_data.registry_indexes)
-                    {
-                        callback_data.lua->registry().get_function_ref(registry_index.lua_index);
-
-                        static auto s_object_property_name = Unreal::FName(STR("ObjectProperty"), Unreal::FNAME_Find);
-                        LuaType::RemoteUnrealParam::construct(*callback_data.lua, &context, s_object_property_name);
-                        LuaType::RemoteUnrealParam::construct(*callback_data.lua, &in_world, s_object_property_name);
-                        callback_data.lua->set_string(to_string(cmd));
-                        LuaType::FOutputDevice::construct(*callback_data.lua, &ar);
-
-                        callback_data.lua->call_function(4, 2);
-
-                        if (callback_data.lua->is_nil())
-                        {
-                            return_value.UseOriginalReturnValue = true;
-                            callback_data.lua->discard_value();
-                        }
-                        else if (!callback_data.lua->is_bool())
-                        {
-                            throw std::runtime_error{"A callback for 'RegisterULocalPlayerExecPreHook' must return bool or nil"};
-                        }
-                        else
-                        {
-                            return_value.UseOriginalReturnValue = false;
-                            return_value.NewReturnValue = callback_data.lua->get_bool();
-                        }
-
-                        if (callback_data.lua->is_nil())
-                        {
-                            return_value.ExecuteOriginalFunction = true;
-                            callback_data.lua->discard_value();
-                        }
-                        else if (!callback_data.lua->is_bool())
-                        {
-                            throw std::runtime_error{"The second return value for callback 'RegisterULocalPlayerExecPreHook' must return bool or nil"};
-                        }
-                        else
-                        {
-                            return_value.ExecuteOriginalFunction = callback_data.lua->get_bool();
-                        }
-                    }
-
-                    return return_value;
-                }
-
-                return Unreal::Hook::ULocalPlayerExecCallbackReturnValue{};
-            });
-        });
-
-        Unreal::Hook::RegisterCallFunctionByNameWithArgumentsPreCallback(
-                [](Unreal::UObject* context, const TCHAR* str, Unreal::FOutputDevice& ar, Unreal::UObject* executor, bool b_force_call_with_non_exec)
-                        -> std::pair<bool, bool> {
-                    return TRY([&] {
-                        std::pair<bool, bool> return_value{};
-                        for (const auto& callback_data : m_call_function_by_name_with_arguments_pre_callbacks)
-                        {
-
-                            for (const auto& [lua, registry_index] : callback_data.registry_indexes)
-                            {
-                                callback_data.lua->registry().get_function_ref(registry_index.lua_index);
-
-                                static auto s_object_property_name = Unreal::FName(STR("ObjectProperty"), Unreal::FNAME_Find);
-                                LuaType::RemoteUnrealParam::construct(*callback_data.lua, &context, s_object_property_name);
-                                callback_data.lua->set_string(to_string(str));
-                                LuaType::FOutputDevice::construct(*callback_data.lua, &ar);
-                                LuaType::RemoteUnrealParam::construct(*callback_data.lua, &executor, s_object_property_name);
-                                callback_data.lua->set_bool(b_force_call_with_non_exec);
-
-                                callback_data.lua->call_function(5, 1);
-
-                                if (callback_data.lua->is_nil())
-                                {
-                                    return_value.first = false;
-                                    callback_data.lua->discard_value();
-                                }
-                                else if (!callback_data.lua->is_bool())
-                                {
-                                    throw std::runtime_error{"A callback for 'RegisterCallFunctionByNameWithArgumentsPreHook' must return bool or nil"};
-                                }
-                                else
-                                {
-                                    return_value.first = true;
-                                    return_value.second = callback_data.lua->get_bool();
-                                }
-                            }
-                        }
-
-                        return return_value;
-                    });
-                });
-
-        Unreal::Hook::RegisterCallFunctionByNameWithArgumentsPostCallback(
-                [](Unreal::UObject* context, const TCHAR* str, Unreal::FOutputDevice& ar, Unreal::UObject* executor, bool b_force_call_with_non_exec)
-                        -> std::pair<bool, bool> {
-                    return TRY([&] {
-                        std::pair<bool, bool> return_value{};
-                        for (const auto& callback_data : m_call_function_by_name_with_arguments_post_callbacks)
-                        {
-
-                            for (const auto& [lua, registry_index] : callback_data.registry_indexes)
-                            {
-                                callback_data.lua->registry().get_function_ref(registry_index.lua_index);
-
-                                static auto s_object_property_name = Unreal::FName(STR("ObjectProperty"), Unreal::FNAME_Find);
-                                LuaType::RemoteUnrealParam::construct(*callback_data.lua, &context, s_object_property_name);
-                                callback_data.lua->set_string(to_string(str));
-                                LuaType::FOutputDevice::construct(*callback_data.lua, &ar);
-                                LuaType::RemoteUnrealParam::construct(*callback_data.lua, &executor, s_object_property_name);
-                                callback_data.lua->set_bool(b_force_call_with_non_exec);
-
-                                callback_data.lua->call_function(5, 1);
-
-                                if (callback_data.lua->is_nil())
-                                {
-                                    return_value.first = false;
-                                    callback_data.lua->discard_value();
-                                }
-                                else if (!callback_data.lua->is_bool())
-                                {
-                                    throw std::runtime_error{"A callback for 'RegisterCallFunctionByNameWithArgumentsPreHook' must return bool or nil"};
-                                }
-                                else
-                                {
-                                    return_value.first = true;
-                                    return_value.second = callback_data.lua->get_bool();
-                                }
-                            }
-                        }
-
-                        return return_value;
-                    });
-                });
+    auto LuaMod::ensure_process_console_exec_hooked() -> void
+    {
+        if (m_is_process_console_exec_hooked)
+        {
+            return;
+        }
+        m_is_process_console_exec_hooked = true;
 
         // Lua from the in-game console.
         Unreal::Hook::RegisterProcessConsoleExecCallback([](Unreal::UObject* context, const TCHAR* cmd, Unreal::FOutputDevice& ar, Unreal::UObject* executor) -> bool {
@@ -7051,17 +7123,6 @@ Overloads:
                 return false;
             });
         });
-
-        if (Unreal::UObject::ProcessLocalScriptFunctionInternal.is_ready() && Unreal::Version::IsAtLeast(4, 22))
-        {
-            Output::send(STR("Enabling custom events\n"));
-            Unreal::Hook::RegisterProcessLocalScriptFunctionPostCallback(script_hook, {false, false, STR("UE4SS"), STR("LuaModImplScriptHook")});
-        }
-        else if (Unreal::UObject::ProcessInternalInternal.is_ready() && Unreal::Version::IsBelow(4, 22))
-        {
-            Output::send(STR("Enabling custom events\n"));
-            Unreal::Hook::RegisterProcessInternalPostCallback(script_hook, {false, false, STR("UE4SS"), STR("LuaModImplScriptHook")});
-        }
     }
 
     auto LuaMod::update_async() -> void
