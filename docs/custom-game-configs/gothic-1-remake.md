@@ -6,17 +6,25 @@
 
 ## Required settings
 
-Two settings differ from upstream defaults and are required for G1R. Both are
-documented in the supplied `UE4SS-settings.ini`.
+These settings differ from upstream defaults for G1R. All are documented in
+the supplied `UE4SS-settings.ini`.
 
-### `bUseUObjectArrayCache = false`  *(default: true)*
+### `bUseUObjectArrayCache` — `true` with this fork, `false` with stock UE4SS
 
-G1R's IoStore build processes GUObjectArray during streaming zone transitions
-in a way that fires UE4SS create/delete listener callbacks on partially
-initialised items. This causes an access violation at startup or on the first
-zone load. Setting this to `false` makes all `FindAllOf` / `FindFirstOf` calls
-scan the array directly each time. The scan cost (~0.1 ms at G1R's object count)
-is acceptable; the crash is not.
+G1R's IoStore build creates objects on async loading threads during streaming
+zone transitions. With stock UE4SS, this fires create/delete listener callbacks
+on partially initialised items, causing an access violation at startup or on
+the first zone load — so stock builds must set this to `false` (all
+`FindAllOf` / `FindFirstOf` calls then scan the array directly each time;
+~0.1 ms at G1R's object count).
+
+The `g1r-compat` branch of [wealdly/UEPseudo](https://github.com/wealdly/UEPseudo)
+(commit `ffe5677`+) guards the listeners, searcher-pool population, and the
+`UStruct::Link` detour against partially-initialized objects (null
+`ClassPrivate`/`ObjectItem`), and adds a mutex around the global object cache
+(the delete listener fires on async loading threads while the game thread
+reads via `FindObject`). With these guards, `bUseUObjectArrayCache = true` has
+been verified stable in-game (startup, zone streaming, lockpicking, clean exit).
 
 ### `DefaultExecuteInGameThreadMethod = EngineTick`  *(already the upstream default)*
 
@@ -112,12 +120,17 @@ GMalloc, FName, StaticConstructObject, GameEngineTick) resolve cleanly on G1R.
 
 ---
 
-## Exit crash (cosmetic)
+## Exit crash (fixed by listener guards)
 
-G1R with UE4SS installed exits with an access violation after the game has
-finished saving and shutting down. This is a known cosmetic teardown issue —
-UE4SS's listeners fire after the engine has already torn down the object array.
-It does not indicate a problem with any mod and does not affect gameplay or saves.
+G1R with **stock** UE4SS installed exits with an access violation after the
+game has finished saving and shutting down — UE4SS listeners firing after the
+engine has torn down the object array. It was always cosmetic (no effect on
+gameplay or saves).
+
+With the `g1r-compat` UEPseudo listener guards (same fix as the
+`bUseUObjectArrayCache` issue above), exits have been observed clean. If it
+recurs, symbolicate the minidump in `%LOCALAPPDATA%\G1R\Saved\Crashes\`
+against the build's `UE4SS.pdb`.
 
 ---
 
