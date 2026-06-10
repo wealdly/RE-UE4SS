@@ -102,6 +102,16 @@ Do not add them to `Engine.ini` when UE4SS is present.
 
 ---
 
+## Expected scan messages (cosmetic)
+
+`[PS] Failed to find FUObjectHashTables::Get()` appears in every G1R launch.
+This scan is optional and its result is currently unused by UE4SS (WIP since
+upstream PR #744). Do not supply a custom `UE4SS_Signatures/GUObjectHashTables.lua`
+for it — a wrong AOB is worse than none. All required scans (GUObjectArray,
+GMalloc, FName, StaticConstructObject, GameEngineTick) resolve cleanly on G1R.
+
+---
+
 ## Exit crash (cosmetic)
 
 G1R with UE4SS installed exits with an access violation after the game has
