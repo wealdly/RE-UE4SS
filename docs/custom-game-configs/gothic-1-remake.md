@@ -110,6 +110,24 @@ Do not add them to `Engine.ini` when UE4SS is present.
 
 ---
 
+## Performance tuning
+
+G1R's AngelScript layer drives engine dispatch points (especially
+`ProcessEvent`) at thousands of calls per frame, so UE4SS detours that are
+cheap elsewhere are disproportionately expensive here. The supplied
+`UE4SS-settings.ini` disables every detour no installed mod uses:
+`HookUObjectProcessEvent`, `HookAActorTick`, `HookGameViewportClientTick`,
+`HookEndPlay`, `HookProcessConsoleExec`, `HookLocalPlayerExec`,
+`HookCallFunctionByNameWithArguments`. If a mod needs one, UE4SS logs a
+warning naming the hook — re-enable just that one.
+
+The `g1r-compat` UEPseudo branch also replaces the searcher pools' O(n)
+erase-remove with index-mapped swap-and-pop (O(1) add/remove, deduped).
+Streaming zone transitions delete thousands of actors at once; the old removal
+was O(deletes × pool size) inside the GC path, under a mutex.
+
+---
+
 ## Expected scan messages (cosmetic)
 
 `[PS] Failed to find FUObjectHashTables::Get()` appears in every G1R launch.
