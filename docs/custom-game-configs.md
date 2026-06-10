@@ -25,3 +25,7 @@ Binaries/Win64/
 If you download the zDEV version, all these files are already included in the zip file.
 
 [You can find them here](https://github.com/UE4SS-RE/RE-UE4SS/tree/main/assets/CustomGameConfigs)
+
+## Game-specific compatibility notes
+
+- [Gothic 1 Remake](custom-game-configs/gothic-1-remake.md)

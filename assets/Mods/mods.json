@@ -38,5 +38,9 @@
     {
         "mod_name": "Keybinds",
         "mod_enabled": true
+    },
+    {
+        "mod_name": "Gothic1RemakeCompat",
+        "mod_enabled": false
     }
 ]
